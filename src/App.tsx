@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { db, initDB } from './utils/db';
 import { User, Notification, AssetHistoryEvent } from './types';
 import PublicHome from './views/PublicHome';
@@ -39,7 +39,8 @@ import {
   Briefcase,
   AlertTriangle,
   Sparkles,
-  FileText
+  FileText,
+  Trash2
 } from 'lucide-react';
 
 export default function App() {
@@ -86,6 +87,11 @@ export default function App() {
   // --- NOTIFICATIONS PANEL STATE ---
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const notificationRef = useRef<HTMLDivElement>(null);
+
+  // --- PROFILE DROPDOWN STATE ---
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
 
   // Periodically sync notifications if user is active
   useEffect(() => {
@@ -98,6 +104,24 @@ export default function App() {
     return () => clearInterval(interval);
   }, [currentUser]);
 
+  // Click-away listener to close notifications & profile panels
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
+        setShowNotifications(false);
+      }
+      if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
+        setShowProfileDropdown(false);
+      }
+    }
+    if (showNotifications || showProfileDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showNotifications, showProfileDropdown]);
+
   const unreadNotifCount = useMemo(() => {
     return notifications.filter(n => !n.read).length;
   }, [notifications]);
@@ -105,11 +129,108 @@ export default function App() {
   const handleMarkNotifRead = (id: string) => {
     db.markNotificationRead(id);
     if (currentUser) setNotifications(db.getNotifications(currentUser.id));
+
+    // Close the notification panel
+    setShowNotifications(false);
+
+    // Get the clicked notification item
+    const clickedNotif = notifications.find(notif => notif.id === id);
+    if (!clickedNotif) return;
+
+    let targetTab = clickedNotif.targetTab;
+    let targetSubTab = clickedNotif.targetSubTab;
+    let targetId = clickedNotif.targetId;
+
+    // Smart fallback if target is not explicitly populated (e.g. for older/existing notifications)
+    if (!targetTab) {
+      // 1. Try to match an issue by ISU-xxxx code (case-insensitive)
+      const isuMatch = clickedNotif.message.match(/ISU-\d+/i);
+      let foundIssue = null;
+      if (isuMatch) {
+        foundIssue = db.getIssues().find(i => i.issueNumber.toUpperCase() === isuMatch[0].toUpperCase());
+      } else {
+        // Fallback: match by description or title keywords
+        foundIssue = db.getIssues().find(i => 
+          clickedNotif.message.toLowerCase().includes(i.title.toLowerCase()) ||
+          clickedNotif.message.toLowerCase().includes(i.issueNumber.toLowerCase())
+        );
+      }
+
+      if (foundIssue) {
+        targetId = foundIssue.id;
+        if (currentUser?.role === 'admin') {
+          targetTab = 'admin-dashboard';
+          targetSubTab = 'issues';
+        } else {
+          targetTab = 'worker-dashboard';
+        }
+      } else {
+        // 2. Try to match a schedule
+        const foundSchedule = db.getSchedules().find(s => 
+          clickedNotif.message.toLowerCase().includes(s.title.toLowerCase()) ||
+          clickedNotif.message.toLowerCase().includes(s.id.toLowerCase())
+        );
+        if (foundSchedule) {
+          targetId = foundSchedule.id;
+          if (currentUser?.role === 'admin') {
+            targetTab = 'admin-dashboard';
+            targetSubTab = 'schedule';
+          } else {
+            targetTab = 'worker-dashboard';
+          }
+        } else {
+          // General fallback for default notifications
+          if (currentUser?.role === 'admin') {
+            targetTab = 'admin-dashboard';
+            targetSubTab = clickedNotif.message.toLowerCase().includes('schedule') || clickedNotif.message.toLowerCase().includes('maintenance') ? 'schedule' : 'issues';
+          } else {
+            targetTab = 'worker-dashboard';
+          }
+        }
+      }
+    }
+
+    // Execute navigation based on targets
+    if (targetTab === 'admin-dashboard') {
+      window.location.hash = '#/admin/dashboard';
+      if (targetSubTab) {
+        setAdminSubTab(targetSubTab as any);
+      }
+      if (targetId) {
+        localStorage.setItem('mq_focused_issue_id', targetId);
+        window.dispatchEvent(new CustomEvent('mq_focus_item', { detail: { type: 'issue', id: targetId } }));
+      }
+    } else if (targetTab === 'worker-dashboard') {
+      window.location.hash = '#/worker/dashboard';
+      if (targetId) {
+        const isIssue = db.getIssues().some(i => i.id === targetId);
+        if (isIssue) {
+          localStorage.setItem('mq_focused_issue_id', targetId);
+          window.dispatchEvent(new CustomEvent('mq_focus_item', { detail: { type: 'issue', id: targetId } }));
+        } else {
+          localStorage.setItem('mq_focused_schedule_id', targetId);
+          window.dispatchEvent(new CustomEvent('mq_focus_item', { detail: { type: 'schedule', id: targetId } }));
+        }
+      }
+    }
   };
 
   const handleMarkAllNotifRead = () => {
     if (!currentUser) return;
     db.markAllNotificationsRead(currentUser.id);
+    setNotifications(db.getNotifications(currentUser.id));
+  };
+
+  const handleDeleteNotification = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    db.deleteNotification(id);
+    if (currentUser) setNotifications(db.getNotifications(currentUser.id));
+  };
+
+  const handleClearAllNotifications = () => {
+    if (!currentUser) return;
+    db.deleteAllNotifications(currentUser.id);
     setNotifications(db.getNotifications(currentUser.id));
   };
 
@@ -144,6 +265,11 @@ export default function App() {
     localStorage.setItem('mq_current_user', JSON.stringify(user));
     setCurrentUser(user);
     if (user.role === 'admin') setAdminSubTab('overview');
+  };
+
+  const handleUserUpdate = (updatedUser: User) => {
+    localStorage.setItem('mq_current_user', JSON.stringify(updatedUser));
+    setCurrentUser(updatedUser);
   };
 
   // --- ROUTE GUARD SECURITY MATRIX ---
@@ -266,7 +392,7 @@ export default function App() {
 
     // Role-Guarded: Worker routes
     if (currentHash === '#/worker/dashboard') {
-      return <WorkerDashboard currentUser={currentUser} />;
+      return <WorkerDashboard currentUser={currentUser} onUserUpdate={handleUserUpdate} />;
     }
 
     // Fallback search
@@ -283,7 +409,7 @@ export default function App() {
       {isDashboardView && (
         <>
           {/* Desktop Sidebar */}
-          <aside className={`hidden md:flex flex-col bg-slate-900 text-slate-400 border-r border-slate-800 transition-all duration-300 shrink-0 ${
+          <aside className={`hidden md:flex flex-col bg-slate-900 text-slate-400 border-r border-slate-800 transition-all duration-300 shrink-0 h-screen sticky top-0 ${
             sidebarCollapsed ? 'w-20' : 'w-64'
           }`}>
             
@@ -307,7 +433,7 @@ export default function App() {
             </div>
 
             {/* Navigation links */}
-            <nav className="flex-1 p-4 space-y-1.5 overflow-y-auto text-xs font-semibold">
+            <nav className="flex-1 p-4 space-y-1.5 overflow-hidden text-xs font-semibold">
               {currentUser?.role === 'admin' ? (
                 /* Admin Sidebar Options */
                 <>
@@ -461,7 +587,7 @@ export default function App() {
 
             {/* Notifications Bell for authorized users */}
             {currentUser && (
-              <div className="relative">
+              <div ref={notificationRef} className="relative">
                 <button
                   onClick={() => setShowNotifications(!showNotifications)}
                   className="p-2 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-700 rounded-xl transition-all relative"
@@ -475,15 +601,33 @@ export default function App() {
 
                 {/* 🚀 --- EMBEDDED NOTIFICATIONS FLOATING PANEL --- */}
                 {showNotifications && (
-                  <div className="absolute right-0 mt-2.5 w-72 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden z-50 py-1 text-xs text-slate-600 dark:text-slate-400">
-                    <div className="p-3 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                  <div className="absolute right-0 mt-2.5 w-80 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden z-50 py-1 text-xs text-slate-600 dark:text-slate-400">
+                    <div className="p-3 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-2">
                       <span className="font-bold text-slate-800 dark:text-white uppercase tracking-wider text-[10px]">Notifications</span>
-                      <button 
-                        onClick={handleMarkAllNotifRead}
-                        className="text-[10px] text-brand-600 dark:text-brand-400 hover:underline font-bold"
-                      >
-                        Mark all as read
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button 
+                          onClick={handleMarkAllNotifRead}
+                          className="text-[10px] text-brand-600 dark:text-brand-400 hover:underline font-semibold"
+                          title="Mark all as read"
+                        >
+                          Read All
+                        </button>
+                        <span className="text-slate-300 dark:text-slate-600 text-[10px]">•</span>
+                        <button 
+                          onClick={handleClearAllNotifications}
+                          className="text-[10px] text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 hover:underline font-semibold"
+                          title="Clear all notifications"
+                        >
+                          Clear All
+                        </button>
+                        <button
+                          onClick={() => setShowNotifications(false)}
+                          className="ml-1 p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-750 transition-all cursor-pointer"
+                          title="Close panel"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
 
                     <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-700/50">
@@ -491,12 +635,21 @@ export default function App() {
                         <div 
                           key={n.id} 
                           onClick={() => handleMarkNotifRead(n.id)}
-                          className={`p-3.5 hover:bg-slate-50/50 dark:hover:bg-slate-750 cursor-pointer transition-colors ${
+                          className={`p-3.5 hover:bg-slate-50/50 dark:hover:bg-slate-750 cursor-pointer transition-colors relative group flex items-start justify-between gap-2 ${
                             !n.read ? 'bg-brand-50/20 dark:bg-brand-950/10 font-medium' : ''
                           }`}
                         >
-                          <p className="text-slate-700 dark:text-slate-300 leading-normal">{n.message}</p>
-                          <span className="text-[9px] text-slate-400 mt-1 block">{new Date(n.createdAt).toLocaleDateString()}</span>
+                          <div className="flex-1 pr-1">
+                            <p className="text-slate-700 dark:text-slate-300 leading-normal">{n.message}</p>
+                            <span className="text-[9px] text-slate-400 mt-1 block">{new Date(n.createdAt).toLocaleDateString()}</span>
+                          </div>
+                          <button
+                            onClick={(e) => handleDeleteNotification(e, n.id)}
+                            className="opacity-0 group-hover:opacity-100 p-1 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all cursor-pointer shrink-0"
+                            title="Delete notification"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       ))}
                       {notifications.length === 0 && (
@@ -510,32 +663,58 @@ export default function App() {
 
             {/* Profile Avatar / Portal Entry links */}
             {currentUser ? (
-              <div className="flex items-center gap-2.5 pl-2 border-l border-slate-100 dark:border-slate-700">
-                <div className="text-right hidden sm:block text-[10px]">
+              <div 
+                ref={profileRef}
+                className="relative flex items-center gap-2.5 pl-2 border-l border-slate-100 dark:border-slate-700"
+              >
+                <div 
+                  onClick={() => setShowProfileDropdown(!showProfileDropdown)}
+                  className="text-right hidden sm:block text-[10px] cursor-pointer hover:opacity-80 transition-opacity select-none"
+                >
                   <p className="font-bold text-slate-700 dark:text-slate-300 leading-none">{currentUser.name}</p>
                   <p className="text-slate-400 mt-0.5 leading-none capitalize">{currentUser.role} Account</p>
                 </div>
-                <div className="relative group">
-                  <div className="w-8.5 h-8.5 rounded-xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center font-bold text-sm cursor-pointer shadow-2xs border border-brand-100 dark:border-brand-900">
+                <div className="relative">
+                  <div 
+                    onClick={() => setShowProfileDropdown(!showProfileDropdown)}
+                    className="w-8.5 h-8.5 rounded-xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center font-bold text-sm cursor-pointer shadow-2xs border border-brand-100 dark:border-brand-900 hover:bg-brand-100 dark:hover:bg-brand-900 transition-all select-none"
+                  >
                     {currentUser.name.charAt(0)}
                   </div>
                   
                   {/* Embedded Dropdown Menu */}
-                  <div className="hidden group-hover:block absolute right-0 mt-1.5 w-40 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden z-50 text-xs py-1">
-                    {currentUser.role === 'admin' && (
-                      <a href="#/admin/dashboard" className="px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-750 block font-semibold text-slate-700 dark:text-slate-300">Admin Panel</a>
-                    )}
-                    {currentUser.role === 'worker' && (
-                      <a href="#/worker/dashboard" className="px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-750 block font-semibold text-slate-700 dark:text-slate-300">Worker Panel</a>
-                    )}
-                    <button
-                      onClick={handleLogout}
-                      className="w-full text-left px-4 py-2 hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-500 font-semibold text-slate-700 dark:text-slate-300 transition-all flex items-center gap-1"
-                    >
-                      <LogOut className="w-3.5 h-3.5 shrink-0 text-red-500" />
-                      Sign Out
-                    </button>
-                  </div>
+                  {showProfileDropdown && (
+                    <div className="absolute right-0 mt-2 w-44 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden z-50 text-xs py-1 animate-in fade-in slide-in-from-top-1 duration-150">
+                      {currentUser.role === 'admin' && (
+                        <a 
+                          href="#/admin/dashboard" 
+                          onClick={() => setShowProfileDropdown(false)}
+                          className="px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-750 block font-semibold text-slate-700 dark:text-slate-300"
+                        >
+                          Admin Panel
+                        </a>
+                      )}
+                      {currentUser.role === 'worker' && (
+                        <a 
+                          href="#/worker/dashboard" 
+                          onClick={() => setShowProfileDropdown(false)}
+                          className="px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-750 block font-semibold text-slate-700 dark:text-slate-300"
+                        >
+                          Worker Panel
+                        </a>
+                      )}
+                      <button
+                        onClick={() => {
+                          setShowProfileDropdown(false);
+                          handleLogout();
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-500 font-semibold text-slate-700 dark:text-slate-300 transition-all flex items-center gap-1.5 border-t border-slate-100 dark:border-slate-700"
+                      >
+                        <LogOut className="w-3.5 h-3.5 shrink-0 text-red-500" />
+                        Sign Out
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (

@@ -178,6 +178,33 @@ export default function TrackIssueView({ currentUser }: TrackIssueViewProps) {
             </div>
           </div>
 
+          {/* User description and uploaded evidence */}
+          <div className="p-5 bg-slate-50 dark:bg-slate-900/30 border border-slate-100 dark:border-slate-800 rounded-2xl space-y-4 text-xs">
+            <div>
+              <p className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Your Problem Description</p>
+              <p className="text-slate-700 dark:text-slate-300 mt-1.5 leading-relaxed bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200/50 dark:border-slate-700/50">
+                {selectedIssue.description}
+              </p>
+            </div>
+            {selectedIssue.evidence && selectedIssue.evidence.length > 0 && (
+              <div>
+                <p className="font-bold text-slate-500 uppercase tracking-wider text-[10px] mb-2">Your Attached Evidence</p>
+                <div className="flex flex-wrap gap-2">
+                  {selectedIssue.evidence.map((imgUrl, idx) => (
+                    <a key={idx} href={imgUrl} target="_blank" rel="noreferrer" className="block cursor-zoom-in">
+                      <img 
+                        src={imgUrl} 
+                        alt={`Evidence ${idx + 1}`} 
+                        className="w-16 h-16 rounded-xl object-cover border border-slate-200 dark:border-slate-700 hover:opacity-90 transition-all" 
+                        referrerPolicy="no-referrer"
+                      />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Core milestone timeline */}
           <div className="space-y-6">
             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">

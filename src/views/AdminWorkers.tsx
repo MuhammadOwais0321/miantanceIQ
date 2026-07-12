@@ -194,7 +194,7 @@ export default function AdminWorkers() {
                 <div className="flex gap-1">
                   <button
                     onClick={() => {
-                      setNewPassword('Tech@123'); // Default suggested reset pass
+                      setNewPassword(tech.passwordHash); // Prepopulate with their current password
                       setResettingUser(tech);
                     }}
                     className="p-1.5 text-slate-400 hover:text-brand-600 hover:bg-slate-50 dark:hover:bg-slate-700/50 rounded-lg border border-transparent cursor-pointer"

@@ -116,6 +116,9 @@ export interface Notification {
   type: NotificationType;
   read: boolean;
   createdAt: string;
+  targetTab?: string;
+  targetSubTab?: string;
+  targetId?: string;
 }
 
 export interface MaintenanceSchedule {

@@ -28,9 +28,10 @@ import {
 
 interface WorkerDashboardProps {
   currentUser: any;
+  onUserUpdate?: (user: any) => void;
 }
 
-export default function WorkerDashboard({ currentUser }: WorkerDashboardProps) {
+export default function WorkerDashboard({ currentUser, onUserUpdate }: WorkerDashboardProps) {
   const [issues, setIssues] = useState(() => db.getIssues());
   const [assets, setAssets] = useState(() => db.getAssets());
   const [records, setRecords] = useState(() => db.getRecords());
@@ -46,6 +47,7 @@ export default function WorkerDashboard({ currentUser }: WorkerDashboardProps) {
   // Navigation state inside technician panel
   const [activeTab, setActiveTab] = useState<'tasks' | 'history' | 'profile'>('tasks');
   const [tasksSubTab, setTasksSubTab] = useState<'repairs' | 'maintenance'>('repairs');
+  const [historySubTab, setHistorySubTab] = useState<'repairs' | 'maintenance'>('repairs');
 
   // Selected ticket / schedule detail expansion state
   const [activeIssue, setActiveIssue] = useState<Issue | null>(null);
@@ -63,28 +65,104 @@ export default function WorkerDashboard({ currentUser }: WorkerDashboardProps) {
   const [formError, setFormError] = useState('');
 
   // Profile Form States
-  const [profileName, setProfileName] = useState(currentUser.name);
-  const [profileEmail, setProfileEmail] = useState(currentUser.email);
-  const [profilePass, setProfilePass] = useState(currentUser.passwordHash || 'Tech@123');
+  const [profileName, setProfileName] = useState(() => currentUser?.name || '');
+  const [profileEmail, setProfileEmail] = useState(() => currentUser?.email || '');
+  const [profilePass, setProfilePass] = useState(() => currentUser?.passwordHash || 'Tech@123');
   const [profileSuccess, setProfileSuccess] = useState('');
   const [profileError, setProfileError] = useState('');
 
+  // Sync profile form states when currentUser updates (from parent context)
+  React.useEffect(() => {
+    if (currentUser) {
+      setProfileName(currentUser.name);
+      setProfileEmail(currentUser.email);
+      setProfilePass(currentUser.passwordHash || 'Tech@123');
+    }
+  }, [currentUser]);
+
+  // Handle auto-focus from notification clicks
+  React.useEffect(() => {
+    const checkFocus = () => {
+      const focusedIssueId = localStorage.getItem('mq_focused_issue_id');
+      if (focusedIssueId) {
+        const found = db.getIssues().find(i => i.id === focusedIssueId);
+        if (found) {
+          setActiveTab('tasks');
+          setTasksSubTab('repairs');
+          setActiveIssue(found);
+          localStorage.removeItem('mq_focused_issue_id');
+          setTimeout(() => {
+            const el = document.getElementById('issue-details-panel');
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              el.classList.add('ring-2', 'ring-brand-500', 'animate-pulse');
+              setTimeout(() => {
+                el.classList.remove('ring-2', 'ring-brand-500', 'animate-pulse');
+              }, 3000);
+            }
+          }, 250);
+        }
+      }
+
+      const focusedScheduleId = localStorage.getItem('mq_focused_schedule_id');
+      if (focusedScheduleId) {
+        const found = db.getSchedules().find(s => s.id === focusedScheduleId);
+        if (found) {
+          setActiveTab('tasks');
+          setTasksSubTab('maintenance');
+          setActiveSchedule(found);
+          localStorage.removeItem('mq_focused_schedule_id');
+          setTimeout(() => {
+            const el = document.getElementById('schedule-details-panel');
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              el.classList.add('ring-2', 'ring-brand-500', 'animate-pulse');
+              setTimeout(() => {
+                el.classList.remove('ring-2', 'ring-brand-500', 'animate-pulse');
+              }, 3000);
+            }
+          }, 250);
+        }
+      }
+    };
+
+    checkFocus();
+
+    const handleFocusEvent = (e: any) => {
+      checkFocus();
+    };
+
+    window.addEventListener('mq_focus_item', handleFocusEvent);
+    return () => window.removeEventListener('mq_focus_item', handleFocusEvent);
+  }, [issues, schedules]);
+
   // 1. Filter tickets assigned to this worker
   const activeTasks = useMemo(() => {
+    if (!currentUser) return [];
     return issues.filter(
       i => i.assignedTechnicianId === currentUser.id && !['Resolved', 'Closed'].includes(i.status)
     );
   }, [issues, currentUser]);
 
-  // Filter custom maintenance schedules assigned to this worker
+  // Filter custom maintenance schedules assigned to this worker (active schedules)
   const mySchedules = useMemo(() => {
+    if (!currentUser) return [];
     return schedules.filter(
-      s => s.assignedTo === currentUser.id
+      s => s.assignedTo === currentUser.id && s.status !== 'Completed' && s.status !== 'Cancelled'
+    );
+  }, [schedules, currentUser]);
+
+  // Filter completed or cancelled maintenance schedules assigned to this worker for history
+  const completedSchedules = useMemo(() => {
+    if (!currentUser) return [];
+    return schedules.filter(
+      s => s.assignedTo === currentUser.id && (s.status === 'Completed' || s.status === 'Cancelled')
     );
   }, [schedules, currentUser]);
 
   // 2. Filter resolved jobs history
   const resolvedTasks = useMemo(() => {
+    if (!currentUser) return [];
     return issues.filter(
       i => i.assignedTechnicianId === currentUser.id && ['Resolved', 'Closed'].includes(i.status)
     );
@@ -111,7 +189,7 @@ export default function WorkerDashboard({ currentUser }: WorkerDashboardProps) {
     // Refresh active schedule state
     const allScheds = db.getSchedules();
     const fresh = allScheds.find(s => s.id === scheduleId);
-    if (fresh) {
+    if (fresh && fresh.status !== 'Completed' && fresh.status !== 'Cancelled') {
       setActiveSchedule(fresh);
     } else {
       setActiveSchedule(null);
@@ -192,12 +270,15 @@ export default function WorkerDashboard({ currentUser }: WorkerDashboardProps) {
     setProfileError('');
 
     try {
-      db.updateUser(currentUser.id, {
+      const updated = db.updateUser(currentUser.id, {
         name: profileName.trim(),
         email: profileEmail.trim(),
         passwordHash: profilePass.trim(),
       });
       refreshData();
+      if (onUserUpdate) {
+        onUserUpdate(updated);
+      }
       setProfileSuccess('Profile credentials modified successfully!');
       setTimeout(() => setProfileSuccess(''), 3000);
     } catch (err: any) {
@@ -213,6 +294,10 @@ export default function WorkerDashboard({ currentUser }: WorkerDashboardProps) {
       default: return 'text-green-600 bg-green-50 border-green-200';
     }
   };
+
+  if (!currentUser) {
+    return null;
+  }
 
   return (
     <div className="max-w-6xl mx-auto py-6 px-4 space-y-6">
@@ -243,7 +328,7 @@ export default function WorkerDashboard({ currentUser }: WorkerDashboardProps) {
         >
           <span className="flex items-center gap-1.5">
             <History className="w-4.5 h-4.5" />
-            Resolved History ({resolvedTasks.length})
+            Resolved History ({resolvedTasks.length + completedSchedules.length})
           </span>
         </button>
 
@@ -356,7 +441,7 @@ export default function WorkerDashboard({ currentUser }: WorkerDashboardProps) {
           </div>
 
           {/* Ticket Detail Panel */}
-          <div className="lg:col-span-3">
+          <div id="issue-details-panel" className="lg:col-span-3">
             {activeIssue ? (
               <div className="bg-white dark:bg-slate-800 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-premium p-6 sm:p-8 space-y-6">
                 
@@ -387,6 +472,24 @@ export default function WorkerDashboard({ currentUser }: WorkerDashboardProps) {
                       {activeIssue.description}
                     </p>
                   </div>
+
+                  {activeIssue.evidence && activeIssue.evidence.length > 0 && (
+                    <div>
+                      <h4 className="font-bold text-slate-500 uppercase tracking-wider text-[10px] mb-1.5">Attached Evidence</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {activeIssue.evidence.map((imgUrl: string, idx: number) => (
+                          <a key={idx} href={imgUrl} target="_blank" rel="noreferrer" className="block cursor-zoom-in">
+                            <img 
+                              src={imgUrl} 
+                              alt={`Evidence ${idx + 1}`} 
+                              className="w-16 h-16 rounded-xl object-cover border border-slate-200 dark:border-slate-800 hover:opacity-90 transition-all" 
+                              referrerPolicy="no-referrer"
+                            />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {activeIssue.aiSuggested && (
                     <div className="p-4 bg-brand-50/20 dark:bg-brand-950/10 border border-brand-100/30 dark:border-brand-950 rounded-xl space-y-3.5 shadow-premium">
@@ -567,16 +670,16 @@ export default function WorkerDashboard({ currentUser }: WorkerDashboardProps) {
                         </div>
 
                         <div>
-                          <label className="block font-bold text-slate-600 uppercase mb-1">Final Asset Condition</label>
+                          <label className="block font-bold text-slate-600 dark:text-slate-300 uppercase mb-1">Final Asset Condition</label>
                           <select
                             value={finalCondition}
                             onChange={(e) => setFinalCondition(e.target.value as AssetCondition)}
-                            className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl bg-transparent dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+                            className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500"
                           >
-                            <option value="New">New</option>
-                            <option value="Good">Good</option>
-                            <option value="Fair">Fair</option>
-                            <option value="Poor">Poor</option>
+                            <option className="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100" value="New">New</option>
+                            <option className="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100" value="Good">Good</option>
+                            <option className="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100" value="Fair">Fair</option>
+                            <option className="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100" value="Poor">Poor</option>
                           </select>
                         </div>
                       </div>
@@ -679,7 +782,7 @@ export default function WorkerDashboard({ currentUser }: WorkerDashboardProps) {
               </div>
 
               {/* Right Column - Schedule Details Panel */}
-              <div className="lg:col-span-3">
+              <div id="schedule-details-panel" className="lg:col-span-3">
                 {activeSchedule ? (
                   <div className="bg-white dark:bg-slate-800 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-premium p-6 sm:p-8 space-y-6">
                     
@@ -815,54 +918,127 @@ export default function WorkerDashboard({ currentUser }: WorkerDashboardProps) {
 
       {/* ================= 2. WORK HISTORY MODULE ================= */}
       {activeTab === 'history' && (
-        <div className="bg-white dark:bg-slate-800 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-premium overflow-hidden p-6 sm:p-8 space-y-4">
-          <div>
-            <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider">Your Resolved Tasks Archive</h3>
-            <p className="text-xs text-slate-400 mt-0.5">Summary breakdown of completed repairs and certified maintenance filings.</p>
+        <div className="bg-white dark:bg-slate-800 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-premium overflow-hidden p-6 sm:p-8 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider">Your Resolved Tasks Archive</h3>
+              <p className="text-xs text-slate-400 mt-0.5">Summary breakdown of completed repairs and certified maintenance filings.</p>
+            </div>
+
+            {/* Sub-tab selection toggle inside history */}
+            <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-900 rounded-2xl max-w-sm border border-slate-200 dark:border-slate-800 self-start sm:self-auto">
+              <button
+                onClick={() => setHistorySubTab('repairs')}
+                className={`px-4 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                  historySubTab === 'repairs'
+                    ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-sm border border-slate-100 dark:border-slate-700/50'
+                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                }`}
+              >
+                Repairs ({resolvedTasks.length})
+              </button>
+              <button
+                onClick={() => setHistorySubTab('maintenance')}
+                className={`px-4 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                  historySubTab === 'maintenance'
+                    ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-sm border border-slate-100 dark:border-slate-700/50'
+                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                }`}
+              >
+                Maintenance ({completedSchedules.length})
+              </button>
+            </div>
           </div>
 
-          {resolvedTasks.length > 0 ? (
-            <div className="divide-y divide-slate-100 dark:divide-slate-750">
-              {resolvedTasks.map(isu => {
-                const affectedAsset = assets.find(a => a.id === isu.assetId);
-                const rec = records.find(r => r.issueId === isu.id);
+          {historySubTab === 'repairs' ? (
+            resolvedTasks.length > 0 ? (
+              <div className="divide-y divide-slate-100 dark:divide-slate-750">
+                {resolvedTasks.map(isu => {
+                  const affectedAsset = assets.find(a => a.id === isu.assetId);
+                  const rec = records.find(r => r.issueId === isu.id);
 
-                return (
-                  <div key={isu.id} className="py-4 space-y-3 text-xs">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-1.5 py-0.5 rounded">
-                          {isu.issueNumber}
+                  return (
+                    <div key={isu.id} className="py-4 space-y-3 text-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-1.5 py-0.5 rounded">
+                            {isu.issueNumber}
+                          </span>
+                          <h4 className="font-bold text-slate-800 dark:text-slate-200">{isu.title}</h4>
+                        </div>
+                        <span className="text-[10px] text-slate-400 shrink-0">
+                          Resolved: {rec ? new Date(rec.resolvedAt).toLocaleDateString() : 'N/A'}
                         </span>
-                        <h4 className="font-bold text-slate-800 dark:text-slate-200">{isu.title}</h4>
                       </div>
-                      <span className="text-[10px] text-slate-400 shrink-0">
-                        Resolved: {rec ? new Date(rec.resolvedAt).toLocaleDateString() : 'N/A'}
-                      </span>
-                    </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-3.5 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-850 shadow-2xs">
-                      <div>
-                        <p className="font-bold text-slate-400 uppercase text-[9px]">Affected Equipment</p>
-                        <p className="font-semibold text-slate-700 dark:text-slate-300 mt-1">{affectedAsset?.name || 'Asset'} ({affectedAsset?.assetCode})</p>
-                      </div>
-                      <div>
-                        <p className="font-bold text-slate-400 uppercase text-[9px]">Resolution work</p>
-                        <p className="font-semibold text-slate-700 dark:text-slate-300 mt-1 line-clamp-2" title={rec?.workPerformed}>{rec?.workPerformed || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <p className="font-bold text-slate-400 uppercase text-[9px]">Calculated Cost / Time</p>
-                        <p className="font-semibold text-slate-700 dark:text-slate-300 mt-1 font-mono">
-                          ${rec?.totalCost.toFixed(2)} • {rec?.timeSpent} minutes
-                        </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-3.5 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-850 shadow-2xs">
+                        <div>
+                          <p className="font-bold text-slate-400 uppercase text-[9px]">Affected Equipment</p>
+                          <p className="font-semibold text-slate-700 dark:text-slate-300 mt-1">{affectedAsset?.name || 'Asset'} ({affectedAsset?.assetCode})</p>
+                        </div>
+                        <div>
+                          <p className="font-bold text-slate-400 uppercase text-[9px]">Resolution work</p>
+                          <p className="font-semibold text-slate-700 dark:text-slate-300 mt-1 line-clamp-2" title={rec?.workPerformed}>{rec?.workPerformed || 'N/A'}</p>
+                        </div>
+                        <div>
+                          <p className="font-bold text-slate-400 uppercase text-[9px]">Calculated Cost / Time</p>
+                          <p className="font-semibold text-slate-700 dark:text-slate-300 mt-1 font-mono">
+                            ${rec?.totalCost.toFixed(2)} • {rec?.timeSpent} minutes
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400 italic text-center py-10">No completed jobs archive available yet.</p>
+            )
           ) : (
-            <p className="text-xs text-slate-400 italic text-center py-10">No completed jobs archive available yet.</p>
+            completedSchedules.length > 0 ? (
+              <div className="divide-y divide-slate-100 dark:divide-slate-750">
+                {completedSchedules.map(sched => {
+                  const affectedAsset = assets.find(a => a.id === sched.assetId);
+
+                  return (
+                    <div key={sched.id} className="py-4 space-y-3 text-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                            sched.status === 'Completed' 
+                              ? 'text-green-600 bg-green-50 border-green-200 dark:bg-green-950/25 dark:text-green-400 dark:border-green-900/40' 
+                              : 'text-slate-500 bg-slate-50 border-slate-200'
+                          }`}>
+                            {sched.status}
+                          </span>
+                          <h4 className="font-bold text-slate-800 dark:text-slate-200">{sched.title}</h4>
+                        </div>
+                        <span className="text-[10px] text-slate-400 shrink-0">
+                          Due Date: {sched.dueDate}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3.5 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-850 shadow-2xs">
+                        <div>
+                          <p className="font-bold text-slate-400 uppercase text-[9px]">Equipment Details</p>
+                          <p className="font-semibold text-slate-700 dark:text-slate-300 mt-1">
+                            {affectedAsset?.name || 'Asset'} ({affectedAsset?.assetCode || 'N/A'})
+                          </p>
+                        </div>
+                        <div>
+                          <p className="font-bold text-slate-400 uppercase text-[9px]">Priority & Location</p>
+                          <p className="font-semibold text-slate-700 dark:text-slate-300 mt-1">
+                            {sched.priority} Priority • {affectedAsset?.location || 'Unknown'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400 italic text-center py-10">No completed maintenance archive available yet.</p>
+            )
           )}
         </div>
       )}

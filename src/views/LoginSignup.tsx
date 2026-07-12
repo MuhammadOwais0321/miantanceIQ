@@ -29,6 +29,7 @@ export default function LoginSignup({ currentPath, onLoginSuccess }: LoginSignup
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
+  const [isUnregisteredEmail, setIsUnregisteredEmail] = useState(false);
 
   // Determine standard role based on page
   let targetRole: UserRole = 'public';
@@ -76,9 +77,19 @@ export default function LoginSignup({ currentPath, onLoginSuccess }: LoginSignup
         const users = db.getUsers();
         const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
 
-        if (!user || user.passwordHash !== password) {
+        if (!user) {
+          if (isPublicPortal) {
+            setIsUnregisteredEmail(true);
+            throw new Error(`The email "${email}" is not registered on MaintainIQ.`);
+          } else {
+            throw new Error('Invalid email or password.');
+          }
+        } else if (user.passwordHash !== password) {
+          setIsUnregisteredEmail(false);
           throw new Error('Invalid email or password.');
         }
+
+        setIsUnregisteredEmail(false);
 
         if (user.status === 'suspended') {
           throw new Error('Your account has been suspended. Please contact an administrator.');
@@ -175,10 +186,93 @@ export default function LoginSignup({ currentPath, onLoginSuccess }: LoginSignup
           </p>
         </div>
 
+        {/* 🌟 Tab Segment Selector for Public Users to Easily Switch */}
+        {isPublicPortal && (
+          <div className="grid grid-cols-2 p-1 bg-slate-100 dark:bg-slate-900/60 rounded-2xl border border-slate-200/50 dark:border-slate-800">
+            <button
+              onClick={() => {
+                setError('');
+                setSuccess('');
+                setIsUnregisteredEmail(false);
+                window.location.hash = '#/login';
+              }}
+              className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center gap-1.5 cursor-pointer ${
+                !isSignup
+                  ? 'bg-white dark:bg-slate-800 text-brand-600 dark:text-brand-400 shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+              }`}
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              Log In
+            </button>
+            <button
+              onClick={() => {
+                setError('');
+                setSuccess('');
+                setIsUnregisteredEmail(false);
+                window.location.hash = '#/signup';
+              }}
+              className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center gap-1.5 cursor-pointer ${
+                isSignup
+                  ? 'bg-white dark:bg-slate-800 text-brand-600 dark:text-brand-400 shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+              }`}
+            >
+              <UserPlus className="w-3.5 h-3.5 text-emerald-500" />
+              Sign Up (Register)
+            </button>
+          </div>
+        )}
+
+        {/* 🌟 Highly Visible Sign-Up Prompt Banner for New Users on the Login Screen */}
+        {isPublicPortal && !isSignup && (
+          <div className="bg-emerald-50/40 dark:bg-emerald-950/15 border border-emerald-100 dark:border-emerald-900/40 p-4 rounded-2xl text-xs text-slate-600 dark:text-slate-300 leading-relaxed space-y-2.5">
+            <p className="font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+              <UserPlus className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              New to MaintainIQ?
+            </p>
+            <p>
+              To report issues, scan asset barcodes, and track your maintenance status, you'll need a free public account.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setError('');
+                setSuccess('');
+                setIsUnregisteredEmail(false);
+                window.location.hash = '#/signup';
+              }}
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-3 rounded-xl text-center cursor-pointer transition-all shadow-xs block text-[11px]"
+            >
+              Create Your Free Account Now →
+            </button>
+          </div>
+        )}
+
         {/* System Messages */}
         {error && (
-          <div className="bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 p-3 rounded-xl text-xs font-semibold leading-relaxed">
-            {error}
+          <div className="bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 p-3.5 rounded-xl text-xs font-semibold leading-relaxed space-y-2">
+            <p>{error}</p>
+            {isUnregisteredEmail && isPublicPortal && (
+              <div className="pt-2 border-t border-red-200/20 dark:border-red-900/40 flex flex-col gap-2">
+                <p className="text-[11px] font-normal text-slate-600 dark:text-slate-300">
+                  This email is not registered yet. Please click the button below to create your free account:
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError('');
+                    setSuccess('');
+                    setIsUnregisteredEmail(false);
+                    window.location.hash = '#/signup';
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded-lg text-center cursor-pointer transition-all text-[11px] shadow-sm flex items-center justify-center gap-1.5"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  Sign Up with This Email
+                </button>
+              </div>
+            )}
           </div>
         )}
         {success && (
@@ -332,46 +426,54 @@ export default function LoginSignup({ currentPath, onLoginSuccess }: LoginSignup
           <h4 className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
             Demo Credentials (Quick-Fill)
           </h4>
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
             {isAdminPortal && (
-              <button
-                type="button"
-                onClick={() => handleDemoFill('admin@maintainiq.com', 'Admin@123')}
-                className="text-left text-xs text-brand-600 dark:text-brand-400 hover:underline font-semibold bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-200/50 dark:border-slate-700 flex items-center justify-between cursor-pointer"
-              >
-                <span>Admin: admin@maintainiq.com</span>
-                <span className="text-[10px] bg-brand-50 dark:bg-brand-950 px-1.5 py-0.5 rounded font-mono">Pass: Admin@123</span>
-              </button>
+              <>
+                {db.getUsers().filter(u => u.role === 'admin').map(admin => (
+                  <button
+                    key={admin.id}
+                    type="button"
+                    onClick={() => handleDemoFill(admin.email, admin.passwordHash)}
+                    className="text-left text-xs text-brand-600 dark:text-brand-400 hover:underline font-semibold bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-200/50 dark:border-slate-700 flex items-center justify-between cursor-pointer"
+                  >
+                    <span>Admin: {admin.email}</span>
+                    <span className="text-[10px] bg-brand-50 dark:bg-brand-950 px-1.5 py-0.5 rounded font-mono">Pass: {admin.passwordHash}</span>
+                  </button>
+                ))}
+              </>
             )}
             {isWorkerPortal && (
               <>
-                <button
-                  type="button"
-                  onClick={() => handleDemoFill('tech1@maintainiq.com', 'Tech@123')}
-                  className="text-left text-xs text-brand-600 dark:text-brand-400 hover:underline font-semibold bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-200/50 dark:border-slate-700 flex items-center justify-between mb-1 cursor-pointer"
-                >
-                  <span>Tech 1: tech1@maintainiq.com</span>
-                  <span className="text-[10px] bg-brand-50 dark:bg-brand-950 px-1.5 py-0.5 rounded font-mono">Pass: Tech@123</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDemoFill('tech2@maintainiq.com', 'Tech@123')}
-                  className="text-left text-xs text-brand-600 dark:text-brand-400 hover:underline font-semibold bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-200/50 dark:border-slate-700 flex items-center justify-between cursor-pointer"
-                >
-                  <span>Tech 2: tech2@maintainiq.com</span>
-                  <span className="text-[10px] bg-brand-50 dark:bg-brand-950 px-1.5 py-0.5 rounded font-mono">Pass: Tech@123</span>
-                </button>
+                {db.getUsers().filter(u => u.role === 'worker').map(worker => (
+                  <button
+                    key={worker.id}
+                    type="button"
+                    onClick={() => handleDemoFill(worker.email, worker.passwordHash)}
+                    className="text-left text-xs text-brand-600 dark:text-brand-400 hover:underline font-semibold bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-200/50 dark:border-slate-700 flex items-center justify-between cursor-pointer animate-fade-in"
+                  >
+                    <span>{worker.name}: {worker.email}</span>
+                    <span className="text-[10px] bg-brand-50 dark:bg-brand-950 px-1.5 py-0.5 rounded font-mono">Pass: {worker.passwordHash}</span>
+                  </button>
+                ))}
+                {db.getUsers().filter(u => u.role === 'worker').length === 0 && (
+                  <p className="text-[10px] text-slate-400 italic text-center py-2">No active technicians in database.</p>
+                )}
               </>
             )}
             {isPublicPortal && (
-              <button
-                type="button"
-                onClick={() => handleDemoFill('john@gmail.com', 'User@123')}
-                className="text-left text-xs text-brand-600 dark:text-brand-400 hover:underline font-semibold bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-200/50 dark:border-slate-700 flex items-center justify-between cursor-pointer"
-              >
-                <span>User: john@gmail.com</span>
-                <span className="text-[10px] bg-brand-50 dark:bg-brand-950 px-1.5 py-0.5 rounded font-mono">Pass: User@123</span>
-              </button>
+              <>
+                {db.getUsers().filter(u => u.role === 'public').map(pubUser => (
+                  <button
+                    key={pubUser.id}
+                    type="button"
+                    onClick={() => handleDemoFill(pubUser.email, pubUser.passwordHash)}
+                    className="text-left text-xs text-brand-600 dark:text-brand-400 hover:underline font-semibold bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-200/50 dark:border-slate-700 flex items-center justify-between cursor-pointer"
+                  >
+                    <span>User: {pubUser.email}</span>
+                    <span className="text-[10px] bg-brand-50 dark:bg-brand-950 px-1.5 py-0.5 rounded font-mono">Pass: {pubUser.passwordHash}</span>
+                  </button>
+                ))}
+              </>
             )}
           </div>
         </div>

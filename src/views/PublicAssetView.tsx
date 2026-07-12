@@ -47,6 +47,53 @@ export default function PublicAssetView({ assetCode, currentUser }: PublicAssetV
   const [initialChecks, setInitialChecks] = useState<string[]>([]);
   const [userEdited, setUserEdited] = useState({ title: false, category: false, priority: false });
 
+  // Real Evidence Attachments
+  const [evidence, setEvidence] = useState<string[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+
+  // File Upload Handlers
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    processFiles(files);
+  };
+
+  const processFiles = (files: FileList) => {
+    Array.from(files).forEach((file) => {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (typeof reader.result === 'string') {
+            setEvidence((prev) => [...prev, reader.result as string]);
+          }
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      processFiles(files);
+    }
+  };
+
+  const removeEvidence = (index: number) => {
+    setEvidence((prev) => prev.filter((_, i) => i !== index));
+  };
+
   // Tracking code after successful submission
   const [submittedIssueCode, setSubmittedIssueCode] = useState<string | null>(null);
 
@@ -61,6 +108,7 @@ export default function PublicAssetView({ assetCode, currentUser }: PublicAssetV
       setPossibleCauses([]);
       setInitialChecks([]);
       setUserEdited({ title: false, category: false, priority: false });
+      setEvidence([]);
       setSubmittedIssueCode(null);
     }
   }, [showReportModal]);
@@ -130,6 +178,7 @@ export default function PublicAssetView({ assetCode, currentUser }: PublicAssetV
       description: complaint,
       category,
       priority,
+      evidence, // Save uploaded evidence Base64 paths
       aiSuggested: aiResult || undefined,
       aiSuggestedUsed: {
         title: !userEdited.title,
@@ -483,18 +532,72 @@ export default function PublicAssetView({ assetCode, currentUser }: PublicAssetV
                     </div>
                   )}
 
-                  {/* Step 3: Optional Evidence attach mockup */}
-                  <div className="p-4 bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-800 rounded-2xl flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-10 h-10 bg-white dark:bg-slate-800 rounded-xl flex items-center justify-center text-slate-400 border border-slate-200/50 shadow-2xs">
-                        <Camera className="w-5 h-5" />
+                  {/* Step 3: Optional Evidence Attachments */}
+                  <div className="space-y-2.5">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Attach Evidence (Photos / Screenshots)
+                    </label>
+                    <label
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      className={`relative flex items-center justify-between p-4 border-2 border-dashed rounded-2xl cursor-pointer transition-all ${
+                        isDragging
+                          ? 'border-brand-500 bg-brand-50/50 dark:bg-brand-950/20'
+                          : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 hover:bg-slate-100 dark:hover:bg-slate-900'
+                      }`}
+                    >
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleFileChange}
+                      />
+                      <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                        <div className="w-10 h-10 bg-white dark:bg-slate-800 rounded-xl flex items-center justify-center text-slate-400 border border-slate-200/50 shadow-2xs shrink-0">
+                          <Camera className="w-5 h-5 animate-pulse" />
+                        </div>
+                        <div className="text-left flex-1 min-w-0">
+                          <h5 className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                            {isDragging ? 'Drop images here!' : 'Attach Evidence / Photo Logs'}
+                          </h5>
+                          <p className="text-[10px] text-slate-400 truncate">
+                            Drag-and-drop or click to upload photos of the malfunction
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <h5 className="text-xs font-bold text-slate-700 dark:text-slate-300">Attach Evidence Attachment</h5>
-                        <p className="text-[10px] text-slate-400">Optional: drag images or click to mock upload camera files</p>
+                      <span className="text-[10px] font-bold text-slate-500 bg-white dark:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-200/50 dark:border-slate-700/50 shadow-2xs shrink-0">
+                        {evidence.length} file{evidence.length !== 1 ? 's' : ''}
+                      </span>
+                    </label>
+
+                    {/* Previews */}
+                    {evidence.length > 0 && (
+                      <div className="flex flex-wrap gap-2 p-2.5 bg-slate-50 dark:bg-slate-900/30 border border-slate-150 dark:border-slate-800 rounded-2xl">
+                        {evidence.map((imgBase64, idx) => (
+                          <div key={idx} className="relative group w-14 h-14 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-2xs shrink-0">
+                            <img
+                              src={imgBase64}
+                              alt={`preview-${idx}`}
+                              className="w-full h-full object-cover animate-fade-in"
+                              referrerPolicy="no-referrer"
+                            />
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                removeEvidence(idx);
+                              }}
+                              className="absolute inset-0 bg-red-600/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[10px] text-white font-bold cursor-pointer"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
                       </div>
-                    </div>
-                    <span className="text-[10px] text-slate-400 italic">None attached</span>
+                    )}
                   </div>
 
                   {/* Bottom validation button */}

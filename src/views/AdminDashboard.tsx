@@ -52,6 +52,44 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
     refreshData();
   }, [currentTab]);
 
+  // Handle auto-focus from notification clicks
+  React.useEffect(() => {
+    const checkFocus = () => {
+      const focusedIssueId = localStorage.getItem('mq_focused_issue_id');
+      if (focusedIssueId) {
+        const found = db.getIssues().find(i => i.id === focusedIssueId);
+        if (found) {
+          setViewingIssue(found);
+          localStorage.removeItem('mq_focused_issue_id');
+        }
+      }
+
+      const focusedScheduleId = localStorage.getItem('mq_focused_schedule_id');
+      if (focusedScheduleId) {
+        setTimeout(() => {
+          const el = document.getElementById(`sched-${focusedScheduleId}`);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.add('ring-2', 'ring-brand-500', 'animate-pulse');
+            setTimeout(() => {
+              el.classList.remove('ring-2', 'ring-brand-500', 'animate-pulse');
+            }, 3000);
+          }
+        }, 200);
+        localStorage.removeItem('mq_focused_schedule_id');
+      }
+    };
+
+    checkFocus();
+
+    const handleFocusEvent = (e: any) => {
+      checkFocus();
+    };
+
+    window.addEventListener('mq_focus_item', handleFocusEvent);
+    return () => window.removeEventListener('mq_focus_item', handleFocusEvent);
+  }, [currentTab, issues, schedules]);
+
   // --- COMPONENT LOCAL STATES ---
   // Search & Filter States
   const [searchQuery, setSearchQuery] = useState('');
@@ -129,6 +167,18 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
     setShowScheduleModal(true);
   };
 
+  const handleOpenScheduleForAsset = (asset: Asset) => {
+    setEditingSchedule(null);
+    setScheduleAssetId(asset.id);
+    setScheduleTitle(`Routine Maintenance: ${asset.name}`);
+    setScheduleDescription(`Interval-based routine servicing of ${asset.name} (${asset.assetCode}) located at ${asset.location}.`);
+    setScheduleDueDate(asset.nextServiceDate || new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+    setSchedulePriority(asset.nextServiceDate < new Date().toISOString().split('T')[0] ? 'High' : 'Medium');
+    setScheduleAssignedTo('');
+    setScheduleStatus('Scheduled');
+    setShowScheduleModal(true);
+  };
+
   const handleSaveSchedule = (e: React.FormEvent) => {
     e.preventDefault();
     if (!scheduleAssetId || !scheduleTitle || !scheduleDueDate) {
@@ -159,6 +209,18 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
   const handleDeleteSchedule = (id: string) => {
     if (confirm('Are you sure you want to delete this maintenance schedule?')) {
       db.deleteSchedule(id);
+      refreshData();
+    }
+  };
+
+  const handleQuickAssignSchedule = (schedId: string, workerId: string) => {
+    db.updateSchedule(schedId, { assignedTo: workerId || undefined });
+    refreshData();
+  };
+
+  const handleRemoveAssetNextService = (assetId: string) => {
+    if (confirm('Are you sure you want to dismiss and remove this upcoming/overdue scheduled service date?')) {
+      db.updateAsset(assetId, { nextServiceDate: '' });
       refreshData();
     }
   };
@@ -302,6 +364,7 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
 
     assets.forEach(a => {
       if (a.status === 'Retired') return;
+      if (!a.nextServiceDate || a.nextServiceDate.trim() === '') return;
       if (a.nextServiceDate < today) {
         overdue.push(a);
       } else {
@@ -825,6 +888,7 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
                 return (
                   <div 
                     key={sched.id} 
+                    id={`sched-${sched.id}`}
                     className="p-5 rounded-2xl border border-slate-100 dark:border-slate-800 hover:border-brand-100 dark:hover:border-slate-700/80 bg-slate-50/40 dark:bg-slate-900/30 transition-all space-y-4 flex flex-col justify-between"
                   >
                     <div className="space-y-3">
@@ -879,21 +943,20 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
                     {/* Footer Row: Worker assignment and edit/delete actions */}
                     <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                       {/* Technician assignment status */}
-                      <div className="space-y-1">
+                      <div className="space-y-1 flex flex-col">
                         <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Assigned Tech</p>
-                        {assignedWorker ? (
-                          <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 font-medium">
-                            <div className="w-5 h-5 rounded-full bg-brand-50 dark:bg-brand-950/50 flex items-center justify-center text-[10px] text-brand-600 dark:text-brand-400 font-bold uppercase border border-brand-100/40">
-                              {assignedWorker.name.charAt(0)}
-                            </div>
-                            <span className="truncate max-w-[120px]">{assignedWorker.name}</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1 text-red-500 font-bold">
-                            <AlertTriangle className="w-3.5 h-3.5" />
-                            <span>Unassigned</span>
-                          </div>
-                        )}
+                        <select
+                          value={sched.assignedTo || ''}
+                          onChange={(e) => handleQuickAssignSchedule(sched.id, e.target.value)}
+                          className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-brand-500 cursor-pointer max-w-[160px] shadow-2xs transition-all"
+                        >
+                          <option value="">⚠️ Unassigned</option>
+                          {workers.map(w => (
+                            <option key={w.id} value={w.id}>
+                              👤 {w.name}
+                            </option>
+                          ))}
+                        </select>
                       </div>
 
                       {/* Due date details */}
@@ -945,23 +1008,65 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
           {/* Overdue queue */}
           <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm space-y-4">
-            <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-700/50 pb-3">
-              <AlertTriangle className="w-5 h-5 text-red-500 animate-pulse" />
-              <h3 className="font-bold text-slate-800 dark:text-slate-200">Asset-interval Overdue Service ({maintenanceSchedules.overdue.length})</h3>
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700/50 pb-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-red-500 animate-pulse" />
+                <h3 className="font-bold text-slate-800 dark:text-slate-200">Asset-interval Overdue Service ({maintenanceSchedules.overdue.length})</h3>
+              </div>
+              <button 
+                onClick={() => handleOpenScheduleModal()} 
+                className="text-[11px] font-bold text-red-600 hover:text-red-700 flex items-center gap-1 bg-red-50 dark:bg-red-950/30 px-2 py-1 rounded-lg border border-red-200/50 dark:border-red-900/30 cursor-pointer transition-all"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Task</span>
+              </button>
             </div>
 
             {maintenanceSchedules.overdue.length > 0 ? (
               <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
                 {maintenanceSchedules.overdue.map(ast => (
-                  <div key={ast.id} className="p-3 bg-red-50/40 dark:bg-red-950/20 border border-red-100 dark:border-red-950/60 rounded-xl flex items-center justify-between gap-4">
+                  <div 
+                    key={ast.id} 
+                    onClick={() => handleOpenScheduleForAsset(ast)}
+                    className="p-3 bg-red-50/40 dark:bg-red-950/20 border border-red-100 dark:border-red-950/60 rounded-xl flex items-center justify-between gap-4 cursor-pointer hover:border-red-400 dark:hover:border-red-800 hover:scale-[1.01] transition-all group"
+                  >
                     <div>
-                      <span className="text-[10px] bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-400 font-bold px-2 py-0.5 rounded font-mono uppercase">{ast.assetCode}</span>
+                      <span className="text-[10px] bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-400 font-bold px-2 py-0.5 rounded font-mono uppercase group-hover:bg-red-200 dark:group-hover:bg-red-900 transition-colors">{ast.assetCode}</span>
                       <h4 className="font-bold text-slate-800 dark:text-white mt-1 text-xs">{ast.name}</h4>
                       <p className="text-[10px] text-slate-400">Location: {ast.location}</p>
                     </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-xs font-black text-red-600 dark:text-red-400">{ast.nextServiceDate}</p>
-                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Overdue</p>
+                    <div className="flex flex-col items-end gap-2 shrink-0">
+                      <div className="text-right">
+                        <p className="text-xs font-black text-red-600 dark:text-red-400">{ast.nextServiceDate}</p>
+                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Overdue</p>
+                      </div>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleRemoveAssetNextService(ast.id);
+                          }}
+                          className="flex items-center gap-1 text-[10px] bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 font-bold px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-600 transition-all cursor-pointer shadow-sm"
+                          title="Dismiss / Clear Next Service Date"
+                        >
+                          <X className="w-3 h-3 text-red-500 shrink-0" />
+                          <span>Dismiss</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleOpenScheduleForAsset(ast);
+                          }}
+                          className="flex items-center gap-1 text-[10px] bg-red-600 hover:bg-red-700 text-white font-bold px-2 py-1 rounded-lg shadow-sm transition-all opacity-90 group-hover:opacity-100 cursor-pointer"
+                        >
+                          <Wrench className="w-3 h-3 shrink-0" />
+                          <span>Schedule</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -973,22 +1078,64 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
 
           {/* Upcoming queue */}
           <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm space-y-4">
-            <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-700/50 pb-3">
-              <Calendar className="w-5 h-5 text-slate-400" />
-              <h3 className="font-bold text-slate-800 dark:text-slate-200">Asset-interval Upcoming Service ({maintenanceSchedules.upcoming.length})</h3>
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700/50 pb-3">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-slate-400" />
+                <h3 className="font-bold text-slate-800 dark:text-slate-200">Asset-interval Upcoming Service ({maintenanceSchedules.upcoming.length})</h3>
+              </div>
+              <button 
+                onClick={() => handleOpenScheduleModal()} 
+                className="text-[11px] font-bold text-brand-600 hover:text-brand-700 flex items-center gap-1 bg-brand-50 dark:bg-brand-950/30 px-2 py-1 rounded-lg border border-brand-200/50 dark:border-brand-900/30 cursor-pointer transition-all"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Task</span>
+              </button>
             </div>
 
             <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
               {maintenanceSchedules.upcoming.map(ast => (
-                <div key={ast.id} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl flex items-center justify-between gap-4">
+                <div 
+                  key={ast.id} 
+                  onClick={() => handleOpenScheduleForAsset(ast)}
+                  className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl flex items-center justify-between gap-4 cursor-pointer hover:border-brand-400 dark:hover:border-slate-700 hover:scale-[1.01] transition-all group"
+                >
                   <div>
-                    <span className="text-[10px] bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold px-2 py-0.5 rounded font-mono uppercase">{ast.assetCode}</span>
+                    <span className="text-[10px] bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold px-2 py-0.5 rounded font-mono uppercase group-hover:bg-slate-200 dark:group-hover:bg-slate-600 transition-colors">{ast.assetCode}</span>
                     <h4 className="font-bold text-slate-800 dark:text-white mt-1 text-xs">{ast.name}</h4>
                     <p className="text-[10px] text-slate-400">Location: {ast.location}</p>
                   </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-xs font-black text-slate-700 dark:text-slate-300">{ast.nextServiceDate}</p>
-                    <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Upcoming</p>
+                  <div className="flex flex-col items-end gap-2 shrink-0">
+                    <div className="text-right">
+                      <p className="text-xs font-black text-slate-700 dark:text-slate-300">{ast.nextServiceDate}</p>
+                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Upcoming</p>
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleRemoveAssetNextService(ast.id);
+                        }}
+                        className="flex items-center gap-1 text-[10px] bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 font-bold px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-600 transition-all cursor-pointer shadow-sm"
+                        title="Dismiss / Clear Next Service Date"
+                      >
+                        <X className="w-3 h-3 text-red-500 shrink-0" />
+                        <span>Dismiss</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleOpenScheduleForAsset(ast);
+                        }}
+                        className="flex items-center gap-1 text-[10px] bg-brand-600 hover:bg-brand-700 text-white font-bold px-2 py-1 rounded-lg shadow-sm transition-all opacity-90 group-hover:opacity-100 cursor-pointer"
+                      >
+                        <Wrench className="w-3 h-3 shrink-0" />
+                        <span>Schedule</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1002,6 +1149,10 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
 
     return null;
   };
+
+  if (!currentUser) {
+    return null;
+  }
 
   return (
     <div className="relative">
@@ -1057,16 +1208,16 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block font-bold text-slate-600 uppercase mb-1">Subsystem Category</label>
+                  <label className="block font-bold text-slate-600 dark:text-slate-300 uppercase mb-1">Subsystem Category</label>
                   <select
                     value={assetCategory}
                     onChange={(e) => setAssetCategory(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-xl bg-transparent dark:text-white focus:outline-none"
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none"
                   >
-                    <option value="Electronics">Electronics</option>
-                    <option value="Heavy Equipment">Heavy Equipment</option>
-                    <option value="HVAC">HVAC</option>
-                    <option value="Appliances">Appliances</option>
+                    <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="Electronics">Electronics</option>
+                    <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="Heavy Equipment">Heavy Equipment</option>
+                    <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="HVAC">HVAC</option>
+                    <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="Appliances">Appliances</option>
                   </select>
                 </div>
 
@@ -1085,34 +1236,34 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block font-bold text-slate-600 uppercase mb-1">Physical Condition</label>
+                  <label className="block font-bold text-slate-600 dark:text-slate-300 uppercase mb-1">Physical Condition</label>
                   <select
                     value={assetCondition}
                     onChange={(e) => setAssetCondition(e.target.value as AssetCondition)}
-                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-xl bg-transparent dark:text-white focus:outline-none"
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none"
                   >
-                    <option value="New">New</option>
-                    <option value="Good">Good</option>
-                    <option value="Fair">Fair</option>
-                    <option value="Poor">Poor</option>
-                    <option value="Critical">Critical</option>
+                    <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="New">New</option>
+                    <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="Good">Good</option>
+                    <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="Fair">Fair</option>
+                    <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="Poor">Poor</option>
+                    <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="Critical">Critical</option>
                   </select>
                 </div>
 
                 {editingAsset && (
                   <div>
-                    <label className="block font-bold text-slate-600 uppercase mb-1">Operating Status</label>
+                    <label className="block font-bold text-slate-600 dark:text-slate-300 uppercase mb-1">Operating Status</label>
                     <select
                       value={assetStatus}
                       onChange={(e) => setAssetStatus(e.target.value as AssetStatus)}
-                      className="w-full px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-xl bg-transparent dark:text-white focus:outline-none"
+                      className="w-full px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none"
                     >
-                      <option value="Operational">Operational</option>
-                      <option value="Issue Reported">Issue Reported</option>
-                      <option value="Under Inspection">Under Inspection</option>
-                      <option value="Under Maintenance">Under Maintenance</option>
-                      <option value="Out of Service">Out of Service</option>
-                      <option value="Retired">Retired</option>
+                      <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="Operational">Operational</option>
+                      <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="Issue Reported">Issue Reported</option>
+                      <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="Under Inspection">Under Inspection</option>
+                      <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="Under Maintenance">Under Maintenance</option>
+                      <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="Out of Service">Out of Service</option>
+                      <option className="bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100" value="Retired">Retired</option>
                     </select>
                   </div>
                 )}

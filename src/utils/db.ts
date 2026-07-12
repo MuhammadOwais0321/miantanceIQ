@@ -511,6 +511,9 @@ export const db = {
       userId: 'usr-admin',
       message: `New Issue Reported: ${issueNumber} on ${asset?.name || 'Asset'}. Priority: ${newIssue.priority}.`,
       type: newIssue.priority === 'Critical' ? 'alert' : 'warning',
+      targetTab: 'admin-dashboard',
+      targetSubTab: 'issues',
+      targetId: newIssue.id,
     });
 
     return newIssue;
@@ -583,6 +586,8 @@ export const db = {
           userId: updates.assignedTechnicianId,
           message: `Assigned task: ${updatedIssue.issueNumber} - ${updatedIssue.title}`,
           type: 'info',
+          targetTab: 'worker-dashboard',
+          targetId: updatedIssue.id,
         });
       }
     }
@@ -668,6 +673,9 @@ export const db = {
       userId: 'usr-admin',
       message: `Technician ${actorName} resolved ${issue.issueNumber}. Cost: $${newRecord.totalCost}.`,
       type: 'success',
+      targetTab: 'admin-dashboard',
+      targetSubTab: 'issues',
+      targetId: issue.id,
     });
 
     // History event
@@ -743,6 +751,18 @@ export const db = {
     saveTable(KEYS.NOTIFICATIONS, notifs);
   },
 
+  deleteNotification(id: string) {
+    let notifs = getTable<Notification>(KEYS.NOTIFICATIONS);
+    notifs = notifs.filter(n => n.id !== id);
+    saveTable(KEYS.NOTIFICATIONS, notifs);
+  },
+
+  deleteAllNotifications(userId: string) {
+    let notifs = getTable<Notification>(KEYS.NOTIFICATIONS);
+    notifs = notifs.filter(n => n.userId !== userId && n.userId !== 'all');
+    saveTable(KEYS.NOTIFICATIONS, notifs);
+  },
+
   // ---------------- SCHEDULE OPERATIONS ----------------
 
   getSchedules(): MaintenanceSchedule[] {
@@ -768,11 +788,13 @@ export const db = {
     });
 
     // Notify assigned technician if any
-    if (schedule.assignedTo) {
+    if (newSchedule.assignedTo) {
       this.createNotification({
-        userId: schedule.assignedTo,
-        message: `New Maintenance Scheduled: ${schedule.title} is assigned to you.`,
-        type: 'info'
+        userId: newSchedule.assignedTo,
+        message: `New Maintenance Scheduled: ${newSchedule.title} is assigned to you.`,
+        type: 'info',
+        targetTab: 'worker-dashboard',
+        targetId: newSchedule.id,
       });
     }
 
@@ -793,7 +815,9 @@ export const db = {
       this.createNotification({
         userId: updates.assignedTo,
         message: `Maintenance Assigned: ${schedules[idx].title} has been assigned to you.`,
-        type: 'info'
+        type: 'info',
+        targetTab: 'worker-dashboard',
+        targetId: schedules[idx].id,
       });
     }
 
