@@ -115,6 +115,8 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
   const [showQrModal, setShowQrModal] = useState<Asset | null>(null);
   const [assigningIssue, setAssigningIssue] = useState<Issue | null>(null);
   const [assetToDelete, setAssetToDelete] = useState<Asset | null>(null);
+  const [scheduleToDelete, setScheduleToDelete] = useState<MaintenanceSchedule | null>(null);
+  const [assetToDismissService, setAssetToDismissService] = useState<Asset | null>(null);
   const [viewingIssue, setViewingIssue] = useState<Issue | null>(null);
   const [noIssueAlert, setNoIssueAlert] = useState<{ assetName: string; assetCode: string } | null>(null);
 
@@ -185,7 +187,7 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
     setScheduleTitle(`Routine Maintenance: ${asset.name}`);
     setScheduleDescription(`Interval-based routine servicing of ${asset.name} (${asset.assetCode}) located at ${asset.location}.`);
     setScheduleDueDate(asset.nextServiceDate || new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
-    setSchedulePriority(asset.nextServiceDate < new Date().toISOString().split('T')[0] ? 'High' : 'Medium');
+    setSchedulePriority(asset.nextServiceDate <= new Date().toISOString().split('T')[0] ? 'High' : 'Medium');
     setScheduleAssignedTo('');
     setScheduleStatus('Scheduled');
     setShowScheduleModal(true);
@@ -219,9 +221,9 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
   };
 
   const handleDeleteSchedule = (id: string) => {
-    if (confirm('Are you sure you want to delete this maintenance schedule?')) {
-      db.deleteSchedule(id);
-      refreshData();
+    const sched = schedules.find(s => s.id === id);
+    if (sched) {
+      setScheduleToDelete(sched);
     }
   };
 
@@ -231,9 +233,9 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
   };
 
   const handleRemoveAssetNextService = (assetId: string) => {
-    if (confirm('Are you sure you want to dismiss and remove this upcoming/overdue scheduled service date?')) {
-      db.updateAsset(assetId, { nextServiceDate: '' });
-      refreshData();
+    const ast = assets.find(a => a.id === assetId);
+    if (ast) {
+      setAssetToDismissService(ast);
     }
   };
   const [formError, setFormError] = useState('');
@@ -377,7 +379,7 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
     assets.forEach(a => {
       if (a.status === 'Retired') return;
       if (!a.nextServiceDate || a.nextServiceDate.trim() === '') return;
-      if (a.nextServiceDate < today) {
+      if (a.nextServiceDate <= today) {
         overdue.push(a);
       } else {
         upcoming.push(a);
@@ -1376,6 +1378,76 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
                 className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold shadow-md cursor-pointer"
               >
                 Confirm Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🚀 --- SCHEDULE DELETE CONFIRMATION MODAL --- */}
+      {scheduleToDelete && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl max-w-sm w-full space-y-5 text-center">
+            <div className="mx-auto w-12 h-12 rounded-full bg-red-100 dark:bg-red-950/40 flex items-center justify-center text-red-600 dark:text-red-400">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">Delete Maintenance Schedule?</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                Are you absolutely sure you want to delete the schedule <span className="font-bold text-slate-700 dark:text-slate-300">{scheduleToDelete.title}</span>? This action is irreversible.
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-3 pt-2 text-xs">
+              <button
+                onClick={() => setScheduleToDelete(null)}
+                className="px-4 py-2 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  db.deleteSchedule(scheduleToDelete.id);
+                  refreshData();
+                  setScheduleToDelete(null);
+                }}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold shadow-md cursor-pointer"
+              >
+                Confirm Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🚀 --- SERVICE DISMISS CONFIRMATION MODAL --- */}
+      {assetToDismissService && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl max-w-sm w-full space-y-5 text-center">
+            <div className="mx-auto w-12 h-12 rounded-full bg-red-100 dark:bg-red-950/40 flex items-center justify-center text-red-600 dark:text-red-400">
+              <X className="w-6 h-6" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">Dismiss Service Date?</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                Are you absolutely sure you want to dismiss and remove the scheduled service date for <span className="font-bold text-slate-700 dark:text-slate-300">{assetToDismissService.name}</span> ({assetToDismissService.assetCode})?
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-3 pt-2 text-xs">
+              <button
+                onClick={() => setAssetToDismissService(null)}
+                className="px-4 py-2 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  db.updateAsset(assetToDismissService.id, { nextServiceDate: '' });
+                  refreshData();
+                  setAssetToDismissService(null);
+                }}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold shadow-md cursor-pointer"
+              >
+                Confirm Dismiss
               </button>
             </div>
           </div>
