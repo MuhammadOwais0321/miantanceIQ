@@ -314,6 +314,7 @@ function getTable<T>(key: string): T[] {
 
 function saveTable<T>(key: string, data: T[]) {
   localStorage.setItem(key, JSON.stringify(data));
+  window.dispatchEvent(new CustomEvent('mq_db_update', { detail: { key } }));
 }
 
 // Generate unique ID
@@ -806,9 +807,42 @@ export const db = {
     const idx = schedules.findIndex(s => s.id === id);
     if (idx === -1) throw new Error('Schedule not found');
 
-    const oldAssignedTo = schedules[idx].assignedTo;
+    const originalSchedule = schedules[idx];
+    const oldAssignedTo = originalSchedule.assignedTo;
     schedules[idx] = { ...schedules[idx], ...updates };
     saveTable(KEYS.SCHEDULES, schedules);
+
+    // Update corresponding asset's status, condition and service dates when schedule status changes
+    if (updates.status && updates.status !== originalSchedule.status) {
+      const asset = this.getAssetById(schedules[idx].assetId);
+      if (asset) {
+        let nextAssetStatus = asset.status;
+        let nextCondition = asset.condition;
+        let lastServDate = asset.lastServiceDate;
+        let nextServDate = asset.nextServiceDate;
+
+        if (updates.status === 'In Progress') {
+          nextAssetStatus = 'Under Maintenance';
+        } else if (updates.status === 'Completed') {
+          nextAssetStatus = 'Operational';
+          nextCondition = 'Good'; // Maintenance successfully done -> Reset to Good condition
+          lastServDate = new Date().toISOString().split('T')[0];
+          
+          const nextDate = new Date();
+          nextDate.setMonth(nextDate.getMonth() + 6);
+          nextServDate = nextDate.toISOString().split('T')[0];
+        } else if (updates.status === 'Scheduled') {
+          nextAssetStatus = 'Operational';
+        }
+
+        this.updateAsset(asset.id, {
+          status: nextAssetStatus,
+          condition: nextCondition,
+          lastServiceDate: lastServDate,
+          nextServiceDate: nextServDate,
+        }, 'system', 'System / Worker');
+      }
+    }
 
     // If assigned worker changed or newly assigned
     if (updates.assignedTo && updates.assignedTo !== oldAssignedTo) {

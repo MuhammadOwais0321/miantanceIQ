@@ -44,6 +44,18 @@ export default function WorkerDashboard({ currentUser, onUserUpdate }: WorkerDas
     setSchedules(db.getSchedules());
   };
 
+  React.useEffect(() => {
+    const handleDbUpdate = () => {
+      refreshData();
+    };
+    window.addEventListener('mq_db_update', handleDbUpdate);
+    window.addEventListener('storage', handleDbUpdate);
+    return () => {
+      window.removeEventListener('mq_db_update', handleDbUpdate);
+      window.removeEventListener('storage', handleDbUpdate);
+    };
+  }, []);
+
   // Navigation state inside technician panel
   const [activeTab, setActiveTab] = useState<'tasks' | 'history' | 'profile'>('tasks');
   const [tasksSubTab, setTasksSubTab] = useState<'repairs' | 'maintenance'>('repairs');

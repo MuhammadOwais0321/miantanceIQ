@@ -49,6 +49,18 @@ export default function AdminDashboard({ currentTab, currentUser, onTabChange }:
   };
 
   React.useEffect(() => {
+    const handleDbUpdate = () => {
+      refreshData();
+    };
+    window.addEventListener('mq_db_update', handleDbUpdate);
+    window.addEventListener('storage', handleDbUpdate);
+    return () => {
+      window.removeEventListener('mq_db_update', handleDbUpdate);
+      window.removeEventListener('storage', handleDbUpdate);
+    };
+  }, []);
+
+  React.useEffect(() => {
     refreshData();
   }, [currentTab]);
 
